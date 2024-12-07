@@ -2,18 +2,12 @@ package internal
 
 import (
 	"bufio"
-	"os"
+	"io/fs"
 	"strings"
 )
 
-// ParseMigrationFile
-func ParseMigrationFile(filePath string) (*Version, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
+// ParseMigration
+func ParseMigration(file fs.File) (*Version, error) {
 	var forwardBuilder strings.Builder
 	var rollbackBuilder strings.Builder
 	inRollback := false
@@ -34,7 +28,7 @@ func ParseMigrationFile(filePath string) (*Version, error) {
 
 		if inRollback {
 			rollbackBuilder.WriteString(line + "\n")
-		} else if trimmed != "" && !strings.HasPrefix(trimmed, "--") && !strings.HasPrefix(trimmed, "/*") {
+		} else if trimmed != "" && !strings.HasPrefix(trimmed, "--") && trimmed != "*/" {
 			forwardBuilder.WriteString(line + "\n")
 		}
 	}
@@ -45,10 +39,10 @@ func ParseMigrationFile(filePath string) (*Version, error) {
 
 	return &Version{
 		Up: &Migration{
-			SQL: forwardBuilder.String(),
+			SQL: strings.TrimSpace(forwardBuilder.String()),
 		},
 		Down: &Migration{
-			SQL: rollbackBuilder.String(),
+			SQL: strings.TrimSpace(rollbackBuilder.String()),
 		},
 	}, nil
 }

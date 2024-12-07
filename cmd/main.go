@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/arhyth/mitch"
+	"github.com/arhyth/mitch/internal"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v2"
@@ -65,7 +66,7 @@ func main() {
 				}
 			}
 
-			runner := mitch.Runner{
+			runner := internal.Runner{
 				Dir: dirFs,
 				DB:  conn,
 			}
