@@ -11,6 +11,7 @@ import (
 
 type Version struct {
 	Id       int
+	Hash     string
 	Up, Down *Migration
 }
 

@@ -2,6 +2,10 @@ package internal
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"fmt"
+	"io"
 	"io/fs"
 	"strings"
 )
@@ -12,7 +16,10 @@ func ParseMigration(file fs.File) (*Version, error) {
 	var rollbackBuilder strings.Builder
 	inRollback := false
 
-	scanner := bufio.NewScanner(file)
+	// duplicate read for hashing SQL contents
+	buf := new(bytes.Buffer)
+	trdr := io.TeeReader(file, buf)
+	scanner := bufio.NewScanner(trdr)
 	for scanner.Scan() {
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
@@ -37,7 +44,9 @@ func ParseMigration(file fs.File) (*Version, error) {
 		return nil, err
 	}
 
+	hash := sha256.Sum256(buf.Bytes())
 	return &Version{
+		Hash: fmt.Sprintf("%x", hash[:]),
 		Up: &Migration{
 			SQL: strings.TrimSpace(forwardBuilder.String()),
 		},
