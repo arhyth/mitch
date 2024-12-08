@@ -21,6 +21,16 @@ DROP TABLE post;
 */
 ```
 
+### Development
+Make changes and run tests
+```
+make tests
+```
+Clean up containers and docker network
+```
+make clean
+```
+
 ### Caveats
 
 This tool only includes a naive file parser, if one can call it that.

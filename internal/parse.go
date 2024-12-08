@@ -22,20 +22,20 @@ func ParseMigration(file fs.File) (*Version, error) {
 	scanner := bufio.NewScanner(trdr)
 	for scanner.Scan() {
 		line := scanner.Text()
-		trimmed := strings.TrimSpace(line)
+		line = strings.TrimSpace(line)
 
-		if strings.HasPrefix(trimmed, "/* rollback") {
+		if strings.HasPrefix(line, "/* rollback") {
 			inRollback = true
 			continue
 		}
-		if inRollback && strings.HasSuffix(trimmed, "*/") {
+		if inRollback && strings.HasSuffix(line, "*/") {
 			inRollback = false
 			continue
 		}
 
 		if inRollback {
 			rollbackBuilder.WriteString(line + "\n")
-		} else if trimmed != "" && !strings.HasPrefix(trimmed, "--") && trimmed != "*/" {
+		} else if line != "" && !strings.HasPrefix(line, "--") && line != "*/" {
 			forwardBuilder.WriteString(line + "\n")
 		}
 	}
@@ -46,12 +46,12 @@ func ParseMigration(file fs.File) (*Version, error) {
 
 	hash := sha256.Sum256(buf.Bytes())
 	return &Version{
-		Hash: fmt.Sprintf("%x", hash[:]),
-		Up: &Migration{
-			SQL: strings.TrimSpace(forwardBuilder.String()),
+		ContentHash: fmt.Sprintf("%x", hash[:]),
+		Up: &SQL{
+			Statements: strings.TrimSpace(forwardBuilder.String()),
 		},
-		Down: &Migration{
-			SQL: strings.TrimSpace(rollbackBuilder.String()),
+		Down: &SQL{
+			Statements: strings.TrimSpace(rollbackBuilder.String()),
 		},
 	}, nil
 }

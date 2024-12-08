@@ -1,7 +1,7 @@
 package main
 
 import (
-	"io/fs"
+	"context"
 	"os"
 
 	"github.com/arhyth/mitch"
@@ -60,17 +60,7 @@ func main() {
 				return err
 			}
 			dirFs := os.DirFS(migrationDir)
-			if sf, ok := dirFs.(fs.StatFS); ok {
-				if _, err = sf.Stat("."); err != nil {
-					return err
-				}
-			}
-
-			runner := internal.Runner{
-				Dir: dirFs,
-				DB:  conn,
-			}
-
+			runner := internal.NewRunner(dirFs, conn)
 			// Rollback mode
 			if rollbackFile != "" {
 				log.Info().
@@ -84,7 +74,7 @@ func main() {
 
 			// Forward mode
 			log.Info().Msg("Running in forward mode...")
-			if err = runner.Migrate(); err != nil {
+			if err = runner.Migrate(context.Background()); err != nil {
 				return err
 			}
 

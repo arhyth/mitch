@@ -18,6 +18,7 @@ var (
 
 	DefaultMigrationDir = "migrations"
 	DefaultPort         = "9000"
+	VersionTable        = "mitch_db_version"
 	// these defaults are of Clickhouse and not ours
 	DefaultUser     = "default"
 	DefaultPassword = ""
@@ -25,14 +26,15 @@ var (
 
 func GetDBOptions(dbURL string) (*clickhouse.Options, error) {
 	if dbURL == "" {
-		if os.Getenv(EnvDatabaseHost) == "" {
+		dbHost := os.Getenv(EnvDatabaseHost)
+		if dbHost == "" {
 			return nil, ErrUnsetDBURL
 		}
 		port := os.Getenv(EnvDatabasePort)
 		if port == "" {
 			port = DefaultPort
 		}
-		dbURL = fmt.Sprintf("tcp://%s:%s", EnvDatabaseHost, port)
+		dbURL = fmt.Sprintf("%s:%s", dbHost, port)
 	}
 
 	dbName := os.Getenv(EnvDatabaseName)
@@ -54,7 +56,7 @@ func GetDBOptions(dbURL string) (*clickhouse.Options, error) {
 	return &clickhouse.Options{
 		Addr: []string{dbURL},
 		Auth: clickhouse.Auth{
-			Database: EnvDatabaseName,
+			Database: dbName,
 			Username: dbUser,
 			Password: dbPasswd,
 		},
