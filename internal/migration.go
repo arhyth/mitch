@@ -6,16 +6,11 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/arhyth/mitch"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/errgroup"
-)
-
-var (
-	dbMaxVersion = int64(1<<63 - 1)
 )
 
 type Version struct {
@@ -31,11 +26,17 @@ type SQL struct {
 
 type Migration []Version
 
-func (ms Migration) FillVersionAtIndex(idx int, file fs.File) error {
+func (ms Migration) FillVersionAtIndex(idx int, dir fs.FS, fname string) error {
+	file, err := dir.Open(fname)
+	if err != nil {
+		return err
+	}
 	ver, err := ParseMigration(file)
 	if err != nil {
 		return err
 	}
+	ver.ID = int64(idx + 1)
+	ver.Source = fname
 	ms[idx] = *ver
 	return nil
 }
@@ -79,43 +80,20 @@ func (rr *Runner) Migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	dbCurrentVersion := dbVersions[len(dbVersions)-1].ID
-	lookupAppliedVers := make(map[string]int64)
-	for _, ver := range dbVersions {
-		lookupAppliedVers[ver.ContentHash] = ver.ID
+
+	toApply, hasMissing := FindUnappliedVersions(dbVersions, foundVersions)
+	if hasMissing {
+		log.Warn().Msg("Migration have missing versions")
 	}
-
-	missingVersions := findMissingVersions(dbVersions, foundVersions, dbCurrentVersion)
-
-	if len(missingVersions) > 0 {
-		var collected []string
-		for _, ver := range missingVersions {
-			output := fmt.Sprintf("version %d: %s", ver.ID, ver.Source)
-			collected = append(collected, output)
-		}
-		return fmt.Errorf("error: found %d missing versions before current version %d:\n\t%s",
-			len(missingVersions), dbCurrentVersion, strings.Join(collected, "\n\t"))
-	}
-
-	var versionsToApply Migration
-	for _, ver := range foundVersions {
-		if _, exist := lookupAppliedVers[ver.ContentHash]; exist {
-			continue
-		}
-		if ver.ID > dbCurrentVersion && ver.ID <= dbMaxVersion {
-			versionsToApply = append(versionsToApply, ver)
-		}
-	}
-
 	var current int64
-	for _, ver := range versionsToApply {
+	for _, ver := range toApply {
 		if err := rr.RunUp(ctx, ver); err != nil {
 			return err
 		}
 		current = ver.ID
 	}
 
-	if len(versionsToApply) == 0 {
+	if len(toApply) == 0 {
 		ver, err := rr.GetCurrentVersion(ctx)
 		if err != nil {
 			return err
@@ -175,7 +153,7 @@ func (rr *Runner) MustVersionTable(ctx context.Context) error {
 		CREATE TABLE IF NOT EXISTS %s.%s (
 		    version_id Int64,
 		    source String,
-			content_hash FixedString(32),
+			content_hash FixedString(64),
 		    created_at DateTime default now()
 		)
 		ENGINE = MergeTree()
@@ -191,7 +169,7 @@ func (rr *Runner) MustVersionTable(ctx context.Context) error {
 		return err
 	}
 
-	if err = rr.InsertVersion(ctx, tx, Version{ID: 0}); err != nil {
+	if err = rr.InsertVersion(ctx, tx, Version{ContentHash: "", ID: 0}); err != nil {
 		if rberr := tx.Rollback(); rberr != nil {
 			log.Error().
 				Err(rberr).
@@ -212,16 +190,13 @@ func (rr *Runner) CollectMigration() (Migration, error) {
 	if err != nil {
 		return nil, err
 	}
+	sort.Strings(sqlMs)
 
 	migrations := make(Migration, len(sqlMs))
 	errgp := new(errgroup.Group)
 	for idx, fname := range sqlMs {
 		errgp.Go(func() error {
-			sqlfile, err := rr.dir.Open(fname)
-			if err != nil {
-				return err
-			}
-			migrations.FillVersionAtIndex(idx, sqlfile)
+			migrations.FillVersionAtIndex(idx, rr.dir, fname)
 			return nil
 		})
 	}
@@ -233,7 +208,7 @@ func (rr *Runner) CollectMigration() (Migration, error) {
 }
 
 func (rr *Runner) ListDBVersions(ctx context.Context) ([]Version, error) {
-	q := `SELECT version_id, content_hash FROM %s.%s ORDER BY version_id DESC`
+	q := `SELECT version_id, content_hash, source FROM %s.%s ORDER BY version_id DESC`
 
 	rows, err := rr.db.QueryContext(ctx, fmt.Sprintf(q, rr.GetDBName(), mitch.VersionTable))
 	if err != nil {
@@ -244,7 +219,7 @@ func (rr *Runner) ListDBVersions(ctx context.Context) ([]Version, error) {
 	var versions []Version
 	for rows.Next() {
 		var ver Version
-		if err := rows.Scan(&ver.ID, &ver.ContentHash); err != nil {
+		if err := rows.Scan(&ver.ID, &ver.ContentHash, &ver.Source); err != nil {
 			return nil, fmt.Errorf("failed to scan list migrations result: %w", err)
 		}
 		versions = append(versions, ver)
@@ -273,19 +248,37 @@ func (rr *Runner) GetCurrentVersion(ctx context.Context) (*Version, error) {
 	return &ver, nil
 }
 
-func findMissingVersions(knownVersions, newVersions Migration, dbMaxVersion int64) Migration {
-	existing := make(map[int64]bool)
-	for _, known := range knownVersions {
-		existing[known.ID] = true
+// FindUnappliedVersions collects versions in the filesystem that has not been applied to the database.
+// It does not include missing versions that are versions lower than current version in the database,
+// only indicating missing versions by returning a boolean
+func FindUnappliedVersions(dbVersions, fsVersions Migration) (unapplied Migration, hasMissing bool) {
+	appliedVers := make(map[string]int64)
+	for _, ver := range dbVersions {
+		appliedVers[ver.ContentHash] = ver.ID
 	}
-	var missingVers Migration
-	for _, new := range newVersions {
-		if !existing[new.ID] && new.ID < dbMaxVersion {
-			missingVers = append(missingVers, new)
+
+	var dbLatest int64
+	for _, dv := range dbVersions {
+		if dv.ID > dbLatest {
+			dbLatest = dv.ID
 		}
 	}
-	sort.SliceStable(missingVers, func(i, j int) bool {
-		return missingVers[i].ID < missingVers[j].ID
+
+	for _, found := range fsVersions {
+		_, applied := appliedVers[found.ContentHash]
+		if applied {
+			continue
+		}
+		if !applied && found.ID < dbLatest {
+			hasMissing = true
+			continue
+		}
+
+		unapplied = append(unapplied, found)
+	}
+	sort.SliceStable(unapplied, func(i, j int) bool {
+		return unapplied[i].ID < unapplied[j].ID
 	})
-	return missingVers
+
+	return unapplied, hasMissing
 }

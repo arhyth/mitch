@@ -19,7 +19,7 @@ func TestBinary(t *testing.T) {
 		total := countSQLFiles(t, "/app/testdata/migrations")
 
 		expectOut := "mitch: successfully migrated database to version: " + strconv.Itoa(total)
-		out, err := cli.run("--config", "/app/testdata/mitch.env")
+		out, err := cli.run("--config", "/app/testdata/test.env")
 		require.NoError(t, err)
 		require.Contains(t, out, expectOut)
 	})

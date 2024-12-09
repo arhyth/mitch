@@ -40,17 +40,15 @@ func main() {
 		Action: func(c *cli.Context) error {
 			rollbackFile := c.String("rollback")
 			dbURL := c.Args().First()
-			migrationDir := c.String(mitch.EnvMigrationDir)
-			if migrationDir != "" {
+			migrationDir := os.Getenv(mitch.EnvMigrationDir)
+			if migrationDir == "" {
 				log.Warn().Msgf(
 					"Migration directory env `%s` not set, defaulting to `%s`",
 					mitch.EnvMigrationDir,
 					mitch.DefaultMigrationDir,
 				)
-			} else {
 				migrationDir = mitch.DefaultMigrationDir
 			}
-
 			if dbURL == "" {
 				log.Warn().Msg("DB URL argument not set, will try env vars...")
 			}
@@ -59,11 +57,13 @@ func main() {
 			if err != nil {
 				return err
 			}
+
 			dirFs := os.DirFS(migrationDir)
 			runner := internal.NewRunner(dirFs, conn)
+
 			// Rollback mode
 			if rollbackFile != "" {
-				log.Info().
+				log.Debug().
 					Str("file", rollbackFile).
 					Msg("Running in rollback mode...")
 				if err = runner.RollbackTo(rollbackFile); err != nil {
@@ -73,8 +73,9 @@ func main() {
 			}
 
 			// Forward mode
-			log.Info().Msg("Running in forward mode...")
+			log.Debug().Msg("Running in forward mode...")
 			if err = runner.Migrate(context.Background()); err != nil {
+				log.Error().Err(err).Msg("runner.Migrate failed")
 				return err
 			}
 

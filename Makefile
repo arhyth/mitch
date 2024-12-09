@@ -6,9 +6,9 @@ NETWORK_NAME := clickhouse-test
 CLICKHOUSE_PORT := 9000
 HOST_PORT := 9000
 
-.PHONY: tests setup test clean stop
+.PHONY: setup build test clean
 
-tests: setup test stop
+reset: clean setup build
 
 setup:
 	@echo "Setting up network and images..."
@@ -42,7 +42,3 @@ clean:
 	@if [ -n "$$(docker images -q $(CLI_IMAGE))" ]; then \
 		docker rmi $(CLI_IMAGE); \
 	fi
-
-stop:
-	@echo "Stopping containers..."
-	@docker stop $(CLICKHOUSE_CONTAINER) || true
