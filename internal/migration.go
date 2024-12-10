@@ -13,6 +13,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type MigrationDirection int
+
+const (
+	Up MigrationDirection = iota
+	Down
+)
+
 type Version struct {
 	ID          int64
 	ContentHash string
@@ -87,7 +94,7 @@ func (rr *Runner) Migrate(ctx context.Context) error {
 	}
 	var current int64
 	for _, ver := range toApply {
-		if err := rr.RunUp(ctx, ver); err != nil {
+		if err := rr.Run(ctx, ver, Up); err != nil {
 			return err
 		}
 		current = ver.ID
@@ -108,26 +115,96 @@ func (rr *Runner) Migrate(ctx context.Context) error {
 	return nil
 }
 
-// TODO
-func (rr *Runner) RollbackTo(fname string) error {
+func (rr *Runner) Rollback(ctx context.Context, fname string) error {
+	migrations, err := rr.CollectMigration()
+	if err != nil {
+		return err
+	}
+	// collate into map to check if contents of filesystem versions
+	// have diverged from applied versions
+	inFSVers := make(map[string]int64, len(migrations))
+	for _, m := range migrations {
+		inFSVers[m.ContentHash] = m.ID
+	}
+
+	// Note: the following sections assume `ListDBVersions` returns a descending order list
+	appliedVers, err := rr.ListDBVersions(ctx)
+	if err != nil {
+		return err
+	}
+
+	var targetId int64
+	idx := len(appliedVers) - 1
+	for {
+		v := appliedVers[idx]
+		if v.Source == fname {
+			targetId = v.ID
+			break
+		}
+		idx -= 1
+	}
+
+	for _, current := range appliedVers {
+		if current.ID == 0 {
+			log.Printf("mitch: no migrations to run. current version: %d\n", current.ID)
+			break
+		}
+
+		if current.ID < targetId {
+			log.Printf("goose: no migrations to run. current version: %d\n", current.ID)
+			break
+		}
+
+		found, exist := inFSVers[current.ContentHash]
+		if !exist {
+			log.Warn().
+				Int64("version", current.ID).
+				Msg("Applied version missing in filesystem migrations")
+		}
+		if exist && found != current.ID {
+			log.Error().
+				Int64("applied", current.ID).
+				Int64("found", found).
+				Msg("Found migration has different version ID to one previously applied")
+			return mitch.ErrVersionDiscrepancy
+		}
+
+		if err = rr.Run(ctx, current, Down); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-func (rr *Runner) RunUp(ctx context.Context, ver Version) error {
+func (rr *Runner) Run(ctx context.Context, ver Version, direction MigrationDirection) error {
 	tx, err := rr.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx, ver.Up.Statements); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("failed to execute SQL: %w", err)
-	}
+	if direction == Up {
+		if _, err := tx.ExecContext(ctx, ver.Up.Statements); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to execute SQL: %w", err)
+		}
 
-	if err := rr.InsertVersion(ctx, tx, ver); err != nil {
-		log.Info().Msg("Rollback transaction")
-		_ = tx.Rollback()
-		return fmt.Errorf("failed to insert new version: %w", err)
+		if err := rr.InsertVersion(ctx, tx, ver); err != nil {
+			log.Info().Msg("Rollback transaction")
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to insert new version: %w", err)
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, ver.Down.Statements); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to execute SQL: %w", err)
+		}
+
+		if err := rr.DeleteVersion(ctx, tx, ver); err != nil {
+			log.Info().Msg("Rollback transaction")
+			_ = tx.Rollback()
+			return fmt.Errorf("failed to insert new version: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -144,6 +221,16 @@ func (rr *Runner) InsertVersion(ctx context.Context, tx *sql.Tx, ver Version) er
 		ver.ID,
 		ver.Source,
 		ver.ContentHash,
+	)
+	return err
+}
+
+func (rr *Runner) DeleteVersion(ctx context.Context, tx *sql.Tx, ver Version) error {
+	q := `ALTER TABLE %s.%s DELETE WHERE version_id = $1 SETTINGS mutations_sync = 2;`
+	_, err := tx.ExecContext(
+		ctx,
+		fmt.Sprintf(q, rr.GetDBName(), mitch.VersionTable),
+		ver.ID,
 	)
 	return err
 }
@@ -207,6 +294,9 @@ func (rr *Runner) CollectMigration() (Migration, error) {
 	return migrations, nil
 }
 
+// ListDBVersions returns DB applied migrations by descending order
+// Caution: DO NOT change the sort order without examining current use of this method
+// in the codebase. Some may be relying on this behavior.
 func (rr *Runner) ListDBVersions(ctx context.Context) ([]Version, error) {
 	q := `SELECT version_id, content_hash, source FROM %s.%s ORDER BY version_id DESC`
 

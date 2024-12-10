@@ -66,7 +66,7 @@ func main() {
 				log.Debug().
 					Str("file", rollbackFile).
 					Msg("Running in rollback mode...")
-				if err = runner.RollbackTo(rollbackFile); err != nil {
+				if err = runner.Rollback(context.Background(), rollbackFile); err != nil {
 					return err
 				}
 				return nil
