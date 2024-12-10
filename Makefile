@@ -8,7 +8,7 @@ HOST_PORT := 9000
 
 .PHONY: setup build test clean
 
-reset: clean setup build
+rerun: clean build test
 
 setup:
 	@echo "Setting up network and images..."
@@ -21,7 +21,7 @@ build:
 
 test:
 	@echo "Running containers..."
-	@docker run -d --name $(CLICKHOUSE_CONTAINER) \
+	@docker run -d --rm --name $(CLICKHOUSE_CONTAINER) \
 		--network $(NETWORK_NAME) \
 		-p $(HOST_PORT):$(CLICKHOUSE_PORT) \
 		$(CLICKHOUSE_IMAGE)
@@ -31,13 +31,9 @@ test:
 		$(CLI_IMAGE)
 
 clean:
-	@echo "Cleaning up containers and network..."
+	@echo "Cleaning up containers..."
 	@if [ -n "$$(docker ps -aq --filter "name=$(CLICKHOUSE_CONTAINER)")" ]; then \
 		docker stop $(CLICKHOUSE_CONTAINER); \
-		docker rm $(CLICKHOUSE_CONTAINER); \
-	fi
-	@if [ -n "$$(docker network ls --filter "name=$(NETWORK_NAME)" -q)" ]; then \
-		docker network rm $(NETWORK_NAME); \
 	fi
 	@if [ -n "$$(docker images -q $(CLI_IMAGE))" ]; then \
 		docker rmi $(CLI_IMAGE); \

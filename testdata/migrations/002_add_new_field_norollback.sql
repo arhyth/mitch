@@ -1,1 +1,1 @@
-ALTER TABLE default.test_table ADD COLUMN NewField UInt32;
+ALTER TABLE test_table ADD COLUMN NewField UInt32;

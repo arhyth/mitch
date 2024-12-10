@@ -13,73 +13,90 @@ import (
 
 func main() {
 	app := &cli.App{
-		Name:  "mitch",
-		Usage: "A simple migration tool for Clickhouse",
-		Flags: []cli.Flag{
-			&cli.StringFlag{
-				Name:     "config",
-				Aliases:  []string{"c"},
-				Usage:    "Path to the configuration file",
-				Required: true,
+		Name:           "mitch",
+		Usage:          "A simple migration tool for Clickhouse",
+		DefaultCommand: "run",
+		Commands: []*cli.Command{
+			{
+				Name: "testhelper",
+				Args: true,
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:     "db-name",
+						Aliases:  []string{"db"},
+						Usage:    "Name of temporary DB to be created for testing",
+						Required: true,
+					},
+				},
 			},
-			&cli.StringFlag{
-				Name:  "rollback",
-				Usage: "Path to the SQL rollback file (optional, triggers rollback mode)",
+			{
+				Name: "run",
+				Args: true,
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:     "env",
+						Aliases:  []string{"e"},
+						Usage:    "Path to the .env file",
+						Required: true,
+					},
+					&cli.StringFlag{
+						Name:  "rollback",
+						Usage: "Path to the SQL rollback file (optional, triggers rollback mode)",
+					},
+				},
+				Action: func(c *cli.Context) error {
+					configPath := c.String("env")
+					log.Info().
+						Str("path", configPath).
+						Msg("loading env vars from file...")
+					if err := godotenv.Load(configPath); err != nil {
+						return err
+					}
+
+					rollbackFile := c.String("rollback")
+					dbURL := c.Args().First()
+					migrationDir := os.Getenv(mitch.EnvMigrationDir)
+					if migrationDir == "" {
+						log.Warn().Msgf(
+							"Migration directory env `%s` not set, defaulting to `%s`",
+							mitch.EnvMigrationDir,
+							mitch.DefaultMigrationDir,
+						)
+						migrationDir = mitch.DefaultMigrationDir
+					}
+					if dbURL == "" {
+						log.Warn().Msg("DB URL argument not set, will try env vars...")
+					}
+
+					conn, err := mitch.Connect(dbURL)
+					if err != nil {
+						return err
+					}
+
+					dirFs := os.DirFS(migrationDir)
+					runner := internal.NewRunner(dirFs, conn)
+
+					// Rollback mode
+					if rollbackFile != "" {
+						log.Debug().
+							Str("file", rollbackFile).
+							Msg("Running in rollback mode...")
+						if err = runner.Rollback(context.Background(), rollbackFile); err != nil {
+							return err
+						}
+						return nil
+					}
+
+					// Forward mode
+					log.Debug().Msg("Running in forward mode...")
+					if err = runner.Migrate(context.Background()); err != nil {
+						log.Error().Err(err).Msg("runner.Migrate failed")
+						return err
+					}
+
+					return nil
+				},
 			},
-		},
-		Before: func(c *cli.Context) error {
-			configPath := c.String("config")
-			log.Info().
-				Str("path", configPath).
-				Msg("loading env vars from config file...")
-			if err := godotenv.Load(configPath); err != nil {
-				return err
-			}
-			return nil
-		},
-		Action: func(c *cli.Context) error {
-			rollbackFile := c.String("rollback")
-			dbURL := c.Args().First()
-			migrationDir := os.Getenv(mitch.EnvMigrationDir)
-			if migrationDir == "" {
-				log.Warn().Msgf(
-					"Migration directory env `%s` not set, defaulting to `%s`",
-					mitch.EnvMigrationDir,
-					mitch.DefaultMigrationDir,
-				)
-				migrationDir = mitch.DefaultMigrationDir
-			}
-			if dbURL == "" {
-				log.Warn().Msg("DB URL argument not set, will try env vars...")
-			}
-
-			conn, err := mitch.Connect(dbURL)
-			if err != nil {
-				return err
-			}
-
-			dirFs := os.DirFS(migrationDir)
-			runner := internal.NewRunner(dirFs, conn)
-
-			// Rollback mode
-			if rollbackFile != "" {
-				log.Debug().
-					Str("file", rollbackFile).
-					Msg("Running in rollback mode...")
-				if err = runner.Rollback(context.Background(), rollbackFile); err != nil {
-					return err
-				}
-				return nil
-			}
-
-			// Forward mode
-			log.Debug().Msg("Running in forward mode...")
-			if err = runner.Migrate(context.Background()); err != nil {
-				log.Error().Err(err).Msg("runner.Migrate failed")
-				return err
-			}
-
-			return nil
 		},
 	}
 
