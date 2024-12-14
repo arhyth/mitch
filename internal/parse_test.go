@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	sampleUpSQL = "CREATE TABLE IF NOT EXISTS default.test_table (\n" +
+	sampleUpSQL = "CREATE TABLE IF NOT EXISTS test_table (\n" +
 		"`TenantId` UInt8,\n" +
 		"`AccountId` UInt16,\n" +
 		"`SiteId` UInt32,\n" +
@@ -22,9 +22,9 @@ var (
 		"ORDER BY (toStartOfHour(`Time`), TenantId, AccountId, SiteId)\n" +
 		"SETTINGS index_granularity = 8192;"
 
-	sampleDownSQL = "DROP TABLE IF EXISTS default.test_table;"
+	sampleDownSQL = "DROP TABLE IF EXISTS test_table;"
 
-	anotherUpSQL = "ALTER TABLE default.test_table ADD COLUMN NewField UInt32;"
+	anotherUpSQL = "ALTER TABLE test_table ADD COLUMN NewField UInt32;"
 )
 
 func TestParseMigration(t *testing.T) {

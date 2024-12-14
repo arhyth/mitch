@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS default.test_table (
+CREATE TABLE IF NOT EXISTS test_table (
     `TenantId` UInt8,
     `AccountId` UInt16,
     `SiteId` UInt32,
@@ -12,5 +12,5 @@ SETTINGS index_granularity = 8192;
 
 
 /* rollback
-DROP TABLE IF EXISTS default.test_table;
+DROP TABLE IF EXISTS test_table;
 */

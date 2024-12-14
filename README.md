@@ -22,11 +22,26 @@ DROP TABLE post;
 ```
 
 ### Development
+:warning: requires docker  
+
+Images used:
+- clickhouse:lts-focal
+- golang:1.22.2-bookworm
+
 Make changes and run tests
+On first run
 ```
+make setup
+make build
 make tests
 ```
-Clean up containers and docker network
+On subsequent runs
+```
+make build
+make tests
+```
+
+Clean up test image and Clickhouse container
 ```
 make clean
 ```

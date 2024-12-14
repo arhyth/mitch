@@ -4,36 +4,83 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/rand"
 )
 
-func TestBinary(t *testing.T) {
-	t.Parallel()
+func TestBinaryForward(t *testing.T) {
 	cli := buildCLI(t)
 
-	t.Run("migrate", func(t *testing.T) {
-		t.Parallel()
-		total := countSQLFiles(t, "/app/testdata/migrations")
+	t.Run("ok", func(tt *testing.T) {
+		reqrd := require.New(tt)
+		dbname := randomName()
+		_, err := cli.run(
+			"testhelper",
+			"--db-name",
+			dbname,
+			"--tempdir",
+			cli.envPath,
+			"create",
+		)
+		reqrd.NoError(err)
 
-		expectOut := "mitch: successfully migrated database to version: " + strconv.Itoa(total)
-		out, err := cli.run("--config", "/app/testdata/test.env")
-		require.NoError(t, err)
-		require.Contains(t, out, expectOut)
-	})
-	t.Run("rollback", func(tt *testing.T) {
-		tt.Skip()
+		expectOut := "mitch: successfully migrated database to version: 9"
+		out, err := cli.run("--env", cli.envPath)
+		reqrd.NoError(err)
+		reqrd.Contains(out, expectOut)
+		tt.Cleanup(func() {
+			cli.run(
+				"testhelper",
+				"--db-name",
+				dbname,
+				"drop",
+			)
+		})
 	})
 }
 
-type mitchBinary struct {
+func TestBinaryRollback(t *testing.T) {
+	t.Run("ok", func(tt *testing.T) {
+		cli := buildCLI(tt)
+		reqrd := require.New(tt)
+
+		// setup and migrate forward
+		dbname := randomName()
+		_, err := cli.run(
+			"testhelper",
+			"--db-name",
+			dbname,
+			"--tempdir",
+			cli.envPath,
+			"create",
+		)
+		reqrd.NoError(err)
+		_, err = cli.run("--env", cli.envPath)
+		reqrd.NoError(err)
+
+		// rollback
+		out, err := cli.run(
+			"--env",
+			cli.envPath,
+			"--rollback",
+			"002_add_new_field_norollback.sql",
+		)
+		expectOut := "mitch: successfully rolled database back to version: 1"
+		reqrd.NoError(err)
+		reqrd.Contains(out, expectOut)
+	})
+}
+
+type testenv struct {
 	binaryPath string
+	envPath    string
 }
 
-func (g mitchBinary) run(params ...string) (string, error) {
-	cmd := exec.Command(g.binaryPath, params...)
+func (e testenv) run(params ...string) (string, error) {
+	cmd := exec.Command(e.binaryPath, params...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to run mitch: %v\nout: %v", err, string(out))
@@ -41,31 +88,37 @@ func (g mitchBinary) run(params ...string) (string, error) {
 	return string(out), nil
 }
 
-// buildCLI builds mitch test binary
-func buildCLI(t *testing.T) mitchBinary {
+func buildCLI(t *testing.T) testenv {
 	t.Helper()
-	binName := "mitch-test"
+	binName := "mitch"
 	dir := t.TempDir()
-	output := filepath.Join(dir, binName)
+	binOut := filepath.Join(dir, binName)
 	args := []string{
 		"build",
-		"-o", output,
+		"-o", binOut,
+		"./cmd",
 	}
 
-	args = append(args, "./cmd")
 	build := exec.Command("go", args...)
 	out, err := build.CombinedOutput()
 	if err != nil {
-		t.Fatalf("failed to build %s binary: %v: %s", binName, err, string(out))
+		t.Fatalf("failed to build %s test binary: %v: %s", binName, err, string(out))
 	}
-	return mitchBinary{
-		binaryPath: output,
+
+	return testenv{
+		binaryPath: binOut,
+		envPath:    filepath.Join(dir, "test.env"),
 	}
 }
 
-func countSQLFiles(t *testing.T, dir string) int {
-	t.Helper()
-	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))
-	require.NoError(t, err)
-	return len(files)
+func randomName() string {
+	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	rand.Seed(uint64(time.Now().UnixNano()))
+	result := make([]byte, 8)
+
+	for i := 0; i < 8; i++ {
+		result[i] = letters[rand.Intn(len(letters))]
+	}
+
+	return string(result)
 }
