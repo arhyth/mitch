@@ -28,7 +28,7 @@ type Version struct {
 }
 
 type SQL struct {
-	Statements string
+	Statements []string
 }
 
 type Migration []Version
@@ -192,29 +192,31 @@ func (rr *Runner) Run(ctx context.Context, ver Version, direction MigrationDirec
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
+	var stmts []string
 	if direction == Up {
-		if _, err := tx.ExecContext(ctx, ver.Up.Statements); err != nil {
+		stmts = ver.Up.Statements
+	} else {
+		stmts = ver.Down.Statements
+	}
+
+	for _, st := range stmts {
+		if _, err := tx.ExecContext(ctx, st); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("failed to execute SQL: %w", err)
 		}
+	}
 
+	if direction == Up {
 		if err := rr.InsertVersion(ctx, tx, ver); err != nil {
 			log.Info().Msg("Rollback transaction")
 			_ = tx.Rollback()
 			return fmt.Errorf("failed to insert new version: %w", err)
 		}
 	} else {
-		if ver.Down.Statements != "" {
-			if _, err := tx.ExecContext(ctx, ver.Down.Statements); err != nil {
-				_ = tx.Rollback()
-				return fmt.Errorf("failed to execute SQL: %w", err)
-			}
-		}
-
 		if err := rr.DeleteVersion(ctx, tx, ver); err != nil {
 			log.Info().Msg("Rollback transaction")
 			_ = tx.Rollback()
-			return fmt.Errorf("failed to insert new version: %w", err)
+			return fmt.Errorf("failed to delete version: %w", err)
 		}
 	}
 

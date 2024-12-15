@@ -9,4 +9,5 @@ var (
 	ErrFileVersionPrefix  = errors.New("migration filename has no version prefix")
 	ErrVersionZero        = errors.New("migration version must be greater than zero")
 	ErrVersionDiscrepancy = errors.New("migration applied changed to a different version number")
+	ErrMultiStatementLine = errors.New("line has multiple SQL statements")
 )
